@@ -1,56 +1,155 @@
 package com.sreejith.speaktonotepoc;
 
-/*
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Rect;
 import android.os.Bundle;
-import android.view.View;
-import android.widget.EditText;
-import android.widget.ImageButton;
-import android.widget.Toast;
-import android.widget.ToggleButton;
-
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-
-import com.google.android.material.floatingactionbutton.FloatingActionButton;
-
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.RadioGroup;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.ToggleButton;
+
+import androidx.activity.EdgeToEdge;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.core.app.ActivityCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+
+import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.mlkit.nl.translate.TranslateLanguage;
+import com.google.mlkit.nl.translate.Translation;
+import com.google.mlkit.nl.translate.Translator;
+import com.google.mlkit.nl.translate.TranslatorOptions;
 
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Objects;
 
-public class MainActivity extends AppCompatActivity {
+public class MultiPocActivity extends AppCompatActivity
+        implements TextToSpeech.OnInitListener {
+
 
     private static final int   REQUEST_RECORD_AUDIO_PERMISSION = 1;
+    private SpeechRecognizer speechRecognizer;
+    private Intent recognizerIntent;
+    private boolean isListening = false;
+    private View currentMicView;
     private EditText[]         editTexts;
     private ImageButton[]      micButtons;
     private FloatingActionButton fabMic;
 
-    private SpeechRecognizer   speechRecognizer;
-    private Intent             recognizerIntent;
-    private boolean            isListening = false;
-
-    // Tracks which mic view (Button or FAB) started the current session:
-    private View               currentMicView;
+    // New fields
+    private TextToSpeech tts;
+    private ConstraintLayout ttsContainer, translateContainer;
+    private Button btnSpeak, btnTranslate;
+    private TextInputEditText etTranslateInput;
+    private RadioGroup rgLanguages;
+    private TextView tvTranslated;
+    private Translator translator;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+        setContentView(R.layout.activity_multi_poc);
         requestAudioPermission();
         bindViews();
         setupSpeechRecognizer();
         setupKeyboardAwareFab();
+
+        // Initialize TTS
+        tts = new TextToSpeech(this, this);
+
+        // Initialize ML Kit translator (no-target yet)
+        // Actual model will be configured on translate button click
+        ttsContainer     = findViewById(R.id.ttsContainer);
+        translateContainer = findViewById(R.id.translateContainer);
+        btnTranslate     = findViewById(R.id.btnTranslate);
+        etTranslateInput = findViewById(R.id.etTranslateInput);
+        rgLanguages      = findViewById(R.id.rgLanguages);
+        tvTranslated     = findViewById(R.id.tvTranslated);
+
+
+
+        // Speak current focused text
+       /* btnSpeak.setOnClickListener(v -> {
+            View focused = getCurrentFocus();
+            if (focused instanceof EditText) {
+                String text = ((EditText) focused).getText().toString();
+                tts.setLanguage(determineLocale()); // picks EN/FR/ES based on system or prefs
+                tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "UTT_ID");
+            }
+        });*/
+
+        // Translate on demand
+        btnTranslate.setOnClickListener(v -> {
+            String input = Objects.requireNonNull(etTranslateInput.getText()).toString().trim();
+            if (input.isEmpty()) {
+                tvTranslated.setText("Please enter text to translate");
+                return;
+            }
+
+            // Show translating placeholder immediately
+            tvTranslated.setText("Translating...");
+
+            // Determine target language
+            String  targetLangCode;
+            Locale targetLocale = getSelectedLocale();
+            if (targetLocale.equals(Locale.FRENCH)) {
+                targetLangCode = TranslateLanguage.FRENCH;
+            } else if (targetLocale.equals(new Locale("es", "ES"))) {
+                targetLangCode = TranslateLanguage.SPANISH;
+            } else {
+                targetLangCode = TranslateLanguage.ENGLISH;
+            }
+
+            // Configure the translator
+            TranslatorOptions options = new TranslatorOptions.Builder()
+                    .setSourceLanguage(TranslateLanguage.ENGLISH)
+                    .setTargetLanguage(targetLangCode)
+                    .build();
+            Translator translator = Translation.getClient(options);
+
+            // Ensure model is downloaded, then translate
+            translator.downloadModelIfNeeded()
+                    .addOnSuccessListener(aVoid ->
+                            translator.translate(input)
+                                    .addOnSuccessListener(
+                                            translatedText -> tvTranslated.setText(translatedText)
+                                    )
+                                    .addOnFailureListener(e ->
+                                            tvTranslated.setText("Error: " + e.getMessage())
+                                    )
+                    )
+                    .addOnFailureListener(e ->
+                            tvTranslated.setText("Model download failed: " + e.getMessage())
+                    );
+        });
+    }
+
+    @Override
+    public void onInit(int status) {
+        // TTS engine initialized
+        if (status == TextToSpeech.SUCCESS) {
+            tts.setLanguage(Locale.getDefault());
+        }
     }
 
     private void requestAudioPermission() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
 
             ActivityCompat.requestPermissions(this,
                     new String[]{ Manifest.permission.RECORD_AUDIO },
@@ -127,18 +226,18 @@ public class MainActivity extends AppCompatActivity {
                 isListening = false;
                 switch (error) {
                     case SpeechRecognizer.ERROR_NO_MATCH:
-                        Toast.makeText(MainActivity.this,
+                        Toast.makeText(MultiPocActivity.this,
                                 "Didn't catch that. Please speak clearly.",
                                 Toast.LENGTH_SHORT).show();
                         break;
                     case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
-                        Toast.makeText(MainActivity.this,
+                        Toast.makeText(MultiPocActivity.this,
                                 "Recording permission missing.",
                                 Toast.LENGTH_SHORT).show();
                         break;
                     case SpeechRecognizer.ERROR_NETWORK:
                     case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
-                        Toast.makeText(MainActivity.this,
+                        Toast.makeText(MultiPocActivity.this,
                                 "Network error. Check your connection.",
                                 Toast.LENGTH_SHORT).show();
                         break;
@@ -188,9 +287,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    */
-/** Toggles listening ON/OFF and updates only the last‑tapped mic’s icon *//*
-
+    /** Toggles listening ON/OFF and updates only the last‑tapped mic’s icon */
     private void toggleListening() {
         if (isListening) {
             stopListening();
@@ -256,9 +353,26 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private Locale getSelectedLocale() {
+        int id = rgLanguages.getCheckedRadioButtonId();
+        if (id == R.id.rbFrench)  return Locale.FRENCH;
+        if (id == R.id.rbSpanish) return new Locale("es", "ES");
+        return Locale.ENGLISH;
+    }
+
+    private Locale determineLocale() {
+        return Locale.getDefault();
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
         speechRecognizer.destroy();
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
     }
-}*/
+
+
+}
